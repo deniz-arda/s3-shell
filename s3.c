@@ -1,16 +1,22 @@
 #include "s3.h"
 
 ///Simple for now, but will be expanded in a following section
-void construct_shell_prompt(char shell_prompt[])
+void construct_shell_prompt(char shell_prompt[], char lwd[])
 {
-    strcpy(shell_prompt, "[s3]$ ");
+    char cwd[MAX_PROMPT_LEN-16];
+    if (getcwd(cwd, sizeof(cwd)) == NULL) {
+        perror("get cwd failed");
+        strcpy(shell_prompt, "[s3]$ ");
+        return;
+    }
+    snprintf(shell_prompt, MAX_PROMPT_LEN, "[%s s3]$ ", cwd);
 }
 
 ///Prints a shell prompt and reads input from the user
-void read_command_line(char line[])
+void read_command_line(char line[], char lwd[])
 {
     char shell_prompt[MAX_PROMPT_LEN];
-    construct_shell_prompt(shell_prompt);
+    construct_shell_prompt(shell_prompt, lwd);
     printf("%s", shell_prompt);
 
     ///See man page of fgets(...)
@@ -154,6 +160,66 @@ void launch_program_with_redirection(char *args[], int argsc, RedirInfo info)
             child_with_input_redirected(args, argsc, info);
         }
     }
+}
+
+void init_lwd(char lwd[])
+{
+    if (getcwd(lwd, MAX_PROMPT_LEN-6) == NULL) {
+        perror("getcwd failed");
+        exit(1);
+    }
+}
+
+bool is_cd(char line[])
+{
+    if (strncmp(line, "cd", 2) == 0) {
+        return 1;
+    }
+    return 0;
+}
+
+void run_cd(char *args[], int argsc, char lwd[])
+{
+    char cwd[MAX_PROMPT_LEN - 6];
+    
+    // Save current directory as "last" directory BEFORE changing
+    if (getcwd(cwd, sizeof(cwd)) == NULL) {
+        perror("getcwd failed");
+        return;
+    }
+    
+    // Determine where to change directory to
+    if (argsc == 1) {
+        // No argument: "cd" → go to home directory
+        char *home = getenv("HOME");
+        if (home == NULL) {
+            fprintf(stderr, "cd: HOME not set\n");
+            return;
+        }
+        
+        if (chdir(home) != 0) {
+            perror("cd failed");
+            return;
+        }
+    }
+    else if (strcmp(args[1], "-") == 0) {
+        // Argument is "-": "cd -" → go to previous directory
+        if (chdir(lwd) != 0) {
+            perror("cd failed");
+            return;
+        }
+        printf("%s\n", lwd);  // Print the directory we switched to
+    }
+    else {
+        // Regular argument: "cd path" → go to specified directory
+        if (chdir(args[1]) != 0) {
+            perror("cd failed");
+            return;
+        }
+    }
+    
+    // Update lwd with the old cwd (now that we've successfully changed)
+    strcpy(lwd, cwd);
 }
 
 bool command_with_redirection(char line[]) 
