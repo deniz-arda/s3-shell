@@ -13,13 +13,21 @@ int main(int argc, char *argv[]){
     int argsc;
 
     while (1) {
+
         read_command_line(line);
-
-        parse_command(line, args, &argsc);
-
-        launch_program(args, argsc); 
-
-        reap();
+        
+        if(command_with_redirection(line)){///Command with redirection
+            RedirInfo info = parse_redirection(line);
+            parse_command(line, args, &argsc);
+            launch_program_with_redirection(args, argsc, info);
+            reap();
+       }
+       else ///Basic command
+       {
+           parse_command(line, args, &argsc);
+           launch_program(args, argsc);
+           reap();
+       }
     }
 
     return 0;

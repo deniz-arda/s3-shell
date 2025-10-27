@@ -10,6 +10,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <stdbool.h>
 
 ///Constants for array sizes, defined for clarity and code readability
 #define MAX_LINE 1024
@@ -25,6 +26,22 @@ enum ArgIndex
     ARG_3,
 };
 
+/// Enum to distinguish different types of redirections
+typedef enum
+{
+    NO_REDIR,
+    OUTPUT_REDIR, /// '>'
+    APPEND_OUTPUT_REDIR, /// '>>'
+    INPUT_REDIR, /// '<' 
+} RedirType;
+
+/// Contains information about the redirection (the type, and the filename that is present in the redirection)
+typedef struct
+{
+    RedirType type;
+    char *filename;
+} RedirInfo;
+
 ///With inline functions, the compiler replaces the function call 
 ///with the actual function code;
 ///inline improves speed and readability; meant for short functions (a few lines).
@@ -38,10 +55,15 @@ static inline void reap()
 void read_command_line(char line[]);
 void construct_shell_prompt(char shell_prompt[]);
 void parse_command(char line[], char *args[], int *argsc);
+bool command_with_redirection(char line[]);
+RedirInfo parse_redirection(char line[]);
 
 ///Child functions (add more as appropriate)
 void child(char *args[], int argsc);
+void child_with_output_redirected(char *args[], int argsc, RedirInfo info);
+void child_with_input_redirected(char *args[], int argsc, RedirInfo info);
 
 ///Program launching functions (add more as appropriate)
 void launch_program(char *args[], int argsc);
+void launch_program_with_redirection(char *args[], int argsc, RedirInfo info);
 #endif

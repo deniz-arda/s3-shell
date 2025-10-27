@@ -42,22 +42,140 @@ void parse_command(char line[], char *args[], int *argsc)
     args[*argsc] = NULL; ///args must be null terminated
 }
 
+RedirInfo parse_redirection(char line[]) 
+{
+    /// First initialize the redirection type to null
+    RedirInfo info;
+    info.type = NO_REDIR;
+    info.filename = NULL;
+    char* pos;
+    
+    /// Check for '>>' first
+    pos = strstr(line, ">>");
+    if (pos != NULL)
+    {
+        info.type = APPEND_OUTPUT_REDIR;
+       *pos = '\0';
+        pos += 2;
+        while (*pos == ' ') pos++;
+        info.filename = pos;
+        return info;
+    }
+    
+    /// Check for '>'
+    pos = strstr(line, ">");
+    if (pos!= NULL)
+    {
+        info.type = OUTPUT_REDIR;
+        *pos = '\0';
+        pos += 1;
+        while (*pos == ' ') pos++;
+        info.filename = pos;
+        return info;
+    }
+    
+    /// Check for '<'
+    pos = strstr(line, "<");
+    if (pos!= NULL)
+    {
+        info.type = INPUT_REDIR;
+        *pos = '\0';
+        pos += 1;
+        while (*pos == ' ') pos++;
+        info.filename = pos;
+        return info;
+    }
+}
+
+void child_with_output_redirected(char *args[], int argsc, RedirInfo info)
+{
+    int flags;
+
+    if (info.type == APPEND_OUTPUT_REDIR) {
+        flags = O_WRONLY | O_CREAT | O_APPEND;
+    }
+    else {
+        flags = O_WRONLY | O_CREAT | O_TRUNC;
+    }
+
+    int fd = open(info.filename, flags, 0644);
+    if (fd < 0) {
+        perror("open failed");
+        exit(1);
+    }
+    if (dup2(fd, STDOUT_FILENO) < 0) {
+        perror("dup2 failed");
+        close(fd);
+        exit(1);
+    }
+    close(fd);
+
+    execvp(args[ARG_PROGNAME], args);
+    /// If it returns, execvp failed
+    perror("execvp failed");
+    exit(1);
+}
+
+void child_with_input_redirected(char *args[], int argsc, RedirInfo info)
+{
+    int fd = open(info.filename, O_RDONLY);
+
+    if (fd < 0) {
+        perror("open failed");
+        exit(1);
+    }
+    if (dup2(fd, STDIN_FILENO) < 0) {
+        perror("dup2 failed");
+        close(fd);
+        exit(1);
+    }
+    close(fd);
+    
+    execvp(args[ARG_PROGNAME], args);
+    /// If it returns, execvp failed
+    perror("execvp failed");
+    exit(1);
+}
+
+void launch_program_with_redirection(char *args[], int argsc, RedirInfo info)
+{
+    int rc = fork();
+
+    if (rc < 0) {
+        perror("fork failed");
+        exit(1);
+    }
+
+    else if (rc == 0) {
+        if (info.type == OUTPUT_REDIR || info.type == APPEND_OUTPUT_REDIR) {
+            child_with_output_redirected(args, argsc, info);
+        }
+        else {
+            child_with_input_redirected(args, argsc, info);
+        }
+    }
+}
+
+bool command_with_redirection(char line[]) 
+{
+    ///Check occurence of <, >, >>
+    if (strchr(line, '<') != NULL || strchr(line, '>') != NULL) {
+        return 1;
+    } 
+    return 0;
+}
 ///Launch related functions
 void child(char *args[], int argsc)
 {
-    ///Implement this function:
     execvp(args[ARG_PROGNAME], args);
     ///If it returns, execvp failed
     perror("execvp failed");
     exit(1); 
-    ///Use execvp to load the binary 
-    ///of the command specified in args[ARG_PROGNAME].
-    ///For reference, see the code in lecture 3.
 }
 
 void launch_program(char *args[], int argsc)
 {
-    ///Implement this function:
+    /// Handle the 'exit' command so that the shell, not the child process exits
     if (strcmp(args[ARG_PROGNAME], "exit") == 0) {
         exit(0);
     }
@@ -70,13 +188,4 @@ void launch_program(char *args[], int argsc)
     else if (rc == 0) {
         child(args, argsc);
     }
-
-    ///fork() a child process.
-    ///In the child part of the code,
-    ///call child(args, argv)
-    ///For reference, see the code in lecture 2.
-
-    ///Handle the 'exit' command;
-    ///so that the shell, not the child process,
-    ///exits.
 }
