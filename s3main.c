@@ -21,21 +21,26 @@ int main(int argc, char *argv[]){
 
         read_command_line(line, lwd); ///Notice the additional parameter (required for prompt construction)
 
-        if(is_cd(line)){///Implement this function
+        if(is_cd(line)){
             parse_command(line, args, &argsc);
-            run_cd(args, argsc, lwd); ///Implement this function
+            run_cd(args, argsc, lwd);
         }
-        else if(command_with_redirection(line)){
+        else if(is_command_with_pipe(line)) {
+            char *commands[MAX_ARGS];
+            int command_count = parse_pipes(line, commands);
+            launch_program_with_pipes(commands, command_count);
+        }
+        else if(is_command_with_redirection(line)){
             ///Command with redirection
             RedirInfo info = parse_redirection(line);
             parse_command(line, args, &argsc);
-            launch_program_with_redirection(args, argsc, info);
+            launch_program_with_redirection(args, argsc, info, NULL, 0, 0);
             reap();
        }
        else ///Basic command
        {
            parse_command(line, args, &argsc);
-           launch_program(args, argsc);
+           launch_program(args, argsc, NULL, 0, 0);
            reap();
        }
     }
