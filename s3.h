@@ -60,6 +60,9 @@ RedirInfo parse_redirection(char line[]);
 bool is_cd(char line[]);
 void init_lwd(char lwd[]);
 void run_cd(char *args[], int argsc, char lwd[]);
+bool command_with_pipe(char line[]);
+void parse_command_pipe(char line[], char *args1[], int *argsc1, char *args2[], int *argsc2);
+void launch_program_with_pipe(char *args1[], int argsc1, char *args2[], int argsc2);
 
 
 ///Child functions (add more as appropriate)

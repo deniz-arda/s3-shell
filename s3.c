@@ -48,6 +48,33 @@ void parse_command(char line[], char *args[], int *argsc)
     args[*argsc] = NULL; ///args must be null terminated
 }
 
+void parse_commands_with_pipes(char line[], char **commands[], int *command_count)
+{
+    // Split line by pipes
+    *command_count = 0;
+    char *token = strtok(line, "|");
+    
+    while (token != NULL && *command_count < MAX_ARGS) {
+        // Allocate space for this command's arguments
+        commands[*command_count] = malloc(MAX_ARGS * sizeof(char*));
+        
+        // Trim leading whitespace from token
+        while (*token == ' ') token++;
+        
+        // Parse this command into arguments
+        char *arg_token = strtok(token, " ");
+        int arg_idx = 0;
+        while (arg_token != NULL && arg_idx < MAX_ARGS - 1) {
+            commands[*command_count][arg_idx++] = arg_token;
+            arg_token = strtok(NULL, " ");
+        }
+        commands[*command_count][arg_idx] = NULL;
+        
+        (*command_count)++;
+        token = strtok(NULL, "|");
+    }
+}
+
 RedirInfo parse_redirection(char line[]) 
 {
     /// First initialize the redirection type to null
@@ -91,6 +118,8 @@ RedirInfo parse_redirection(char line[])
         info.filename = pos;
         return info;
     }
+
+    return info;
 }
 
 void child_with_output_redirected(char *args[], int argsc, RedirInfo info)
@@ -230,6 +259,26 @@ bool command_with_redirection(char line[])
     } 
     return 0;
 }
+
+//check occurence of pipe
+bool command_with_pipe(char line[]){
+    if (strchr(line, '|')!= NULL){
+        return 1;
+    }
+    return 0;
+}
+
+//counts number of pipes
+int count_pipes(char line[]){
+    int count = 0;
+    char *p = line;
+    while(p = strtchr(p, '|') != NULL){
+        count ++;
+        p++;
+    }
+
+    return count;
+}
 ///Launch related functions
 void child(char *args[], int argsc)
 {
@@ -253,5 +302,77 @@ void launch_program(char *args[], int argsc)
     }
     else if (rc == 0) {
         child(args, argsc);
+    }
+}
+
+void launch_program_with_pipes(char **commands[], int command_count)
+{
+    if (command_count == 0) return;
+    
+    int i;
+    int pipefds[2 * (command_count - 1)]; // Need 2 FDs per pipe
+    
+    // Create all pipes
+    for (i = 0; i < command_count - 1; i++) {
+        if (pipe(pipefds + i * 2) < 0) {
+            perror("pipe failed");
+            exit(1);
+        }
+    }
+    
+    // Fork and execute each command
+    for (i = 0; i < command_count; i++) {
+        int rc = fork();
+        
+        if (rc < 0) {
+            perror("fork failed");
+            exit(1);
+        }
+        
+        if (rc == 0) {
+            // Child process
+            
+            // If not the first command, redirect stdin from previous pipe
+            if (i > 0) {
+                if (dup2(pipefds[(i - 1) * 2], STDIN_FILENO) < 0) {
+                    perror("dup2 failed");
+                    exit(1);
+                }
+            }
+            
+            // If not the last command, redirect stdout to next pipe
+            if (i < command_count - 1) {
+                if (dup2(pipefds[i * 2 + 1], STDOUT_FILENO) < 0) {
+                    perror("dup2 failed");
+                    exit(1);
+                }
+            }
+            
+            // Close all pipe file descriptors
+            int j;
+            for (j = 0; j < 2 * (command_count - 1); j++) {
+                close(pipefds[j]);
+            }
+            
+            // Execute the command
+            execvp(commands[i][0], commands[i]);
+            perror("execvp failed");
+            exit(1);
+        }
+    }
+    
+    // Parent: close all pipe file descriptors
+    for (i = 0; i < 2 * (command_count - 1); i++) {
+        close(pipefds[i]);
+    }
+    
+    // Wait for all children
+    for (i = 0; i < command_count; i++) {
+        wait(NULL);
+    }
+    
+    // Free allocated memory
+    for (i = 0; i < command_count; i++) {
+        free(commands[i]);
     }
 }
