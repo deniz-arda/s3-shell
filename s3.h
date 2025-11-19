@@ -55,22 +55,24 @@ static inline void reap()
 void read_command_line(char line[], char lwd[]);
 void construct_shell_prompt(char shell_prompt[], char lwd[]);
 void parse_command(char line[], char *args[], int *argsc);
-bool command_with_redirection(char line[]);
 RedirInfo parse_redirection(char line[]);
+int parse_pipes(char line[], char *commands[]);
+int parse_batch(char line[], char *lines[]);
+bool is_command_with_redirection(char line[]);
 bool is_cd(char line[]);
+bool is_command_with_pipe(char line[]);
+bool is_command_with_batch(char line[]);
 void init_lwd(char lwd[]);
 void run_cd(char *args[], int argsc, char lwd[]);
-bool command_with_pipe(char line[]);
-void parse_command_pipe(char line[], char *args1[], int *argsc1, char *args2[], int *argsc2);
-void launch_program_with_pipe(char *args1[], int argsc1, char *args2[], int argsc2);
-
 
 ///Child functions (add more as appropriate)
-void child(char *args[], int argsc);
-void child_with_output_redirected(char *args[], int argsc, RedirInfo info);
-void child_with_input_redirected(char *args[], int argsc, RedirInfo info);
+void child(char *args[], int argsc, int *pipesfds, int command_count, int cmd_idx);
+void child_with_output_redirected(char *args[], int argsc, RedirInfo info, int *pipesfds, int command_count, int cmd_idx);
+void child_with_input_redirected(char *args[], int argsc, RedirInfo info, int *pipesfds, int command_count, int cmd_idx);
 
 ///Program launching functions (add more as appropriate)
-void launch_program(char *args[], int argsc);
-void launch_program_with_redirection(char *args[], int argsc, RedirInfo info);
+void launch_program(char *args[], int argsc, int *pipesfds, int command_count, int cmd_idx);
+void launch_program_with_redirection(char *args[], int argsc, RedirInfo info, int *pipesfds, int command_count, int cmd_idx);
+void launch_program_with_pipes(char *commands[], int command_count);
+void launch_program_with_batch(char line[]);
 #endif

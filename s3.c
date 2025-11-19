@@ -48,31 +48,18 @@ void parse_command(char line[], char *args[], int *argsc)
     args[*argsc] = NULL; ///args must be null terminated
 }
 
-void parse_commands_with_pipes(char line[], char **commands[], int *command_count)
+int parse_pipes(char line[], char *commands[])
 {
-    // Split line by pipes
-    *command_count = 0;
+    int count = 0;
     char *token = strtok(line, "|");
     
-    while (token != NULL && *command_count < MAX_ARGS) {
-        // Allocate space for this command's arguments
-        commands[*command_count] = malloc(MAX_ARGS * sizeof(char*));
-        
-        // Trim leading whitespace from token
+    while (token != NULL && count < MAX_ARGS) {
+        // Trim leading spaces
         while (*token == ' ') token++;
-        
-        // Parse this command into arguments
-        char *arg_token = strtok(token, " ");
-        int arg_idx = 0;
-        while (arg_token != NULL && arg_idx < MAX_ARGS - 1) {
-            commands[*command_count][arg_idx++] = arg_token;
-            arg_token = strtok(NULL, " ");
-        }
-        commands[*command_count][arg_idx] = NULL;
-        
-        (*command_count)++;
+        commands[count++] = token;
         token = strtok(NULL, "|");
     }
+    return count;
 }
 
 RedirInfo parse_redirection(char line[]) 
@@ -88,7 +75,7 @@ RedirInfo parse_redirection(char line[])
     if (pos != NULL)
     {
         info.type = APPEND_OUTPUT_REDIR;
-       *pos = '\0';
+        *pos = '\0';
         pos += 2;
         while (*pos == ' ') pos++;
         info.filename = pos;
@@ -118,21 +105,159 @@ RedirInfo parse_redirection(char line[])
         info.filename = pos;
         return info;
     }
-
+    
     return info;
 }
 
-void child_with_output_redirected(char *args[], int argsc, RedirInfo info)
+//separate single line into multiple command lines
+int parse_batch(char line[], char *lines[])
 {
-    int flags;
 
+    int count = 0;
+    char *token = strtok(line, ";");
+
+    while (token != NULL && count < MAX_ARGS){
+        //trim leading spaces
+        while (*token == ' ') token++;
+        lines[count++] = token;
+        token = strtok(NULL, ";");
+    }
+    return count;
+}
+
+// Functions to check for redirection, cd, and pipes
+bool is_command_with_redirection(char line[]) 
+{
+    if (strchr(line, '<') != NULL || strchr(line, '>') != NULL) {
+        return 1;
+    } 
+    return 0;
+}
+
+bool is_cd(char line[])
+{
+    if (strncmp(line, "cd", 2) == 0) {
+        return 1;
+    }
+    return 0;
+}
+
+bool is_command_with_pipe(char line[])
+{
+    if (strchr(line, '|')!= NULL) {
+        return 1;
+    }
+    return 0;
+}
+
+bool is_command_with_batch(char line[])
+{
+    if (strchr(line, ';') != NULL) {
+        return 1;
+    }
+    return 0;
+}
+
+void init_lwd(char lwd[])
+{
+    if (getcwd(lwd, MAX_PROMPT_LEN-6) == NULL) {
+        perror("getcwd failed");
+        exit(1);
+    }
+}
+void run_cd(char *args[], int argsc, char lwd[])
+{
+    char cwd[MAX_PROMPT_LEN - 6];
+    
+    // Save current directory as last directory
+    if (getcwd(cwd, sizeof(cwd)) == NULL) {
+        perror("getcwd failed");
+        return;
+    }
+    
+    if (argsc == 1) {
+        // if only argument is "cd" go to home directory
+        char *home = getenv("HOME");
+        if (home == NULL) {
+            fprintf(stderr, "cd: HOME not set\n");
+            return;
+        }
+        
+        if (chdir(home) != 0) {
+            perror("cd failed");
+            return;
+        }
+    }
+    else if (strcmp(args[1], "-") == 0) {
+        // "cd -" (go to previous directory)
+        if (chdir(lwd) != 0) {
+            perror("cd failed");
+            return;
+        }
+        printf("%s\n", lwd);  // Print the directory we switched to
+    }
+    else {
+        // go to directory stated in the argument
+        if (chdir(args[1]) != 0) {
+            perror("cd failed");
+            return;
+        }
+    }
+    
+    // Update lwd with the old cwd
+    strcpy(lwd, cwd);
+}
+
+///Launch related functions
+void child(char *args[], int argsc, int *pipefds, int pipe_count, int cmd_idx)
+{
+    // Handles pipes if they exist
+    if (pipefds != NULL) {
+        
+        // read from previous pipe unless it is the first command
+        if (cmd_idx > 0) {
+            dup2(pipefds[(cmd_idx -1) * 2], STDIN_FILENO);
+        }
+        
+        // write to next pipe unless it is the last command
+        if (cmd_idx < pipe_count) {
+            dup2(pipefds[cmd_idx*2 + 1], STDOUT_FILENO);
+        }
+        // close all pipe file descriptors
+        for (int i = 0; i < pipe_count * 2; i++) {
+            close(pipefds[i]);
+        }
+    }
+    
+    execvp(args[ARG_PROGNAME], args);
+    ///If it returns, execvp failed
+    perror("execvp failed");
+    exit(1); 
+}
+
+void child_with_output_redirected(char *args[], int argsc, RedirInfo info, int *pipefds, int pipe_count, int cmd_idx)
+{
+    // Handle pipes
+    if (pipefds != NULL && cmd_idx > 0) {
+        dup2(pipefds[(cmd_idx-1) * 2], STDIN_FILENO);
+    }
+    
+    if (pipefds != NULL) {
+        for (int i = 0; i < pipe_count * 2; i++){
+            close(pipefds[i]);
+        }
+    }
+    
+    // Redirection
+    int flags;
+    
     if (info.type == APPEND_OUTPUT_REDIR) {
         flags = O_WRONLY | O_CREAT | O_APPEND;
     }
     else {
         flags = O_WRONLY | O_CREAT | O_TRUNC;
     }
-
+    
     int fd = open(info.filename, flags, 0644);
     if (fd < 0) {
         perror("open failed");
@@ -144,17 +269,29 @@ void child_with_output_redirected(char *args[], int argsc, RedirInfo info)
         exit(1);
     }
     close(fd);
-
+    
     execvp(args[ARG_PROGNAME], args);
     /// If it returns, execvp failed
     perror("execvp failed");
     exit(1);
 }
 
-void child_with_input_redirected(char *args[], int argsc, RedirInfo info)
+void child_with_input_redirected(char *args[], int argsc, RedirInfo info, int *pipefds, int pipe_count, int cmd_idx)
 {
+    // Handle pipes - send output to the next command
+    if (pipefds != NULL && cmd_idx < pipe_count) {
+        dup2(pipefds[cmd_idx*2 + 1], STDOUT_FILENO);
+    }
+    
+    if (pipefds != NULL) {
+        for (int i = 0; i < pipe_count * 2; i++) {
+            close(pipefds[i]);
+        }
+    }
+    
+    // Redirection
     int fd = open(info.filename, O_RDONLY);
-
+    
     if (fd < 0) {
         perror("open failed");
         exit(1);
@@ -172,207 +309,128 @@ void child_with_input_redirected(char *args[], int argsc, RedirInfo info)
     exit(1);
 }
 
-void launch_program_with_redirection(char *args[], int argsc, RedirInfo info)
+
+void launch_program(char *args[], int argsc, int *pipefds, int pipe_count, int cmd_idx)
 {
-    int rc = fork();
-
-    if (rc < 0) {
-        perror("fork failed");
-        exit(1);
-    }
-
-    else if (rc == 0) {
-        if (info.type == OUTPUT_REDIR || info.type == APPEND_OUTPUT_REDIR) {
-            child_with_output_redirected(args, argsc, info);
-        }
-        else {
-            child_with_input_redirected(args, argsc, info);
-        }
-    }
-}
-
-void init_lwd(char lwd[])
-{
-    if (getcwd(lwd, MAX_PROMPT_LEN-6) == NULL) {
-        perror("getcwd failed");
-        exit(1);
-    }
-}
-
-bool is_cd(char line[])
-{
-    if (strncmp(line, "cd", 2) == 0) {
-        return 1;
-    }
-    return 0;
-}
-
-void run_cd(char *args[], int argsc, char lwd[])
-{
-    char cwd[MAX_PROMPT_LEN - 6];
-    
-    // Save current directory as "last" directory BEFORE changing
-    if (getcwd(cwd, sizeof(cwd)) == NULL) {
-        perror("getcwd failed");
-        return;
-    }
-    
-    // Determine where to change directory to
-    if (argsc == 1) {
-        // No argument: "cd" → go to home directory
-        char *home = getenv("HOME");
-        if (home == NULL) {
-            fprintf(stderr, "cd: HOME not set\n");
-            return;
-        }
-        
-        if (chdir(home) != 0) {
-            perror("cd failed");
-            return;
-        }
-    }
-    else if (strcmp(args[1], "-") == 0) {
-        // Argument is "-": "cd -" → go to previous directory
-        if (chdir(lwd) != 0) {
-            perror("cd failed");
-            return;
-        }
-        printf("%s\n", lwd);  // Print the directory we switched to
-    }
-    else {
-        // Regular argument: "cd path" → go to specified directory
-        if (chdir(args[1]) != 0) {
-            perror("cd failed");
-            return;
-        }
-    }
-    
-    // Update lwd with the old cwd (now that we've successfully changed)
-    strcpy(lwd, cwd);
-}
-
-bool command_with_redirection(char line[]) 
-{
-    ///Check occurence of <, >, >>
-    if (strchr(line, '<') != NULL || strchr(line, '>') != NULL) {
-        return 1;
-    } 
-    return 0;
-}
-
-//check occurence of pipe
-bool command_with_pipe(char line[]){
-    if (strchr(line, '|')!= NULL){
-        return 1;
-    }
-    return 0;
-}
-
-//counts number of pipes
-int count_pipes(char line[]){
-    int count = 0;
-    char *p = line;
-    while(p = strtchr(p, '|') != NULL){
-        count ++;
-        p++;
-    }
-
-    return count;
-}
-///Launch related functions
-void child(char *args[], int argsc)
-{
-    execvp(args[ARG_PROGNAME], args);
-    ///If it returns, execvp failed
-    perror("execvp failed");
-    exit(1); 
-}
-
-void launch_program(char *args[], int argsc)
-{
-    /// Handle the 'exit' command so that the shell, not the child process exits
+    /// shell exits for 'exit' command
     if (strcmp(args[ARG_PROGNAME], "exit") == 0) {
         exit(0);
     }
-
+    
     int rc = fork();
     if (rc < 0) {
         perror("fork failed");
         exit(1);
     }
     else if (rc == 0) {
-        child(args, argsc);
+        child(args, argsc, pipefds, pipe_count, cmd_idx);
     }
 }
 
-void launch_program_with_pipes(char **commands[], int command_count)
+void launch_program_with_redirection(char *args[], int argsc, RedirInfo info, int *pipefds, int pipe_count, int cmd_idx)
 {
-    if (command_count == 0) return;
+    int rc = fork();
     
-    int i;
-    int pipefds[2 * (command_count - 1)]; // Need 2 FDs per pipe
+    if (rc < 0) {
+        perror("fork failed");
+        exit(1);
+    }
     
-    // Create all pipes
-    for (i = 0; i < command_count - 1; i++) {
-        if (pipe(pipefds + i * 2) < 0) {
+    else if (rc == 0) {
+        if (info.type == OUTPUT_REDIR || info.type == APPEND_OUTPUT_REDIR) {
+            child_with_output_redirected(args, argsc, info, pipefds, pipe_count, cmd_idx);
+        }
+        else {
+            child_with_input_redirected(args, argsc, info, pipefds, pipe_count, cmd_idx);
+        }
+    }
+}
+
+void launch_program_with_pipes(char *commands[], int command_count)
+{
+    // Create flat array of pipe fds
+    int pipefds[(command_count - 1) * 2];
+    
+    // Create all pipes before forking
+    for (int i = 0; i < command_count - 1; i++) {
+        if (pipe(pipefds + i*2) < 0) {
             perror("pipe failed");
             exit(1);
         }
     }
     
-    // Fork and execute each command
-    for (i = 0; i < command_count; i++) {
-        int rc = fork();
+    // Each command becomes a separate child process
+    for (int i = 0; i < command_count; i++) {
+        char *args[MAX_ARGS];
+        int argsc;
+        char cmd_buffer[MAX_LINE];
+        strcpy(cmd_buffer, commands[i]);
         
-        if (rc < 0) {
-            perror("fork failed");
-            exit(1);
-        }
-        
-        if (rc == 0) {
-            // Child process
-            
-            // If not the first command, redirect stdin from previous pipe
-            if (i > 0) {
-                if (dup2(pipefds[(i - 1) * 2], STDIN_FILENO) < 0) {
-                    perror("dup2 failed");
-                    exit(1);
-                }
-            }
-            
-            // If not the last command, redirect stdout to next pipe
-            if (i < command_count - 1) {
-                if (dup2(pipefds[i * 2 + 1], STDOUT_FILENO) < 0) {
-                    perror("dup2 failed");
-                    exit(1);
-                }
-            }
-            
-            // Close all pipe file descriptors
-            int j;
-            for (j = 0; j < 2 * (command_count - 1); j++) {
-                close(pipefds[j]);
-            }
-            
-            // Execute the command
-            execvp(commands[i][0], commands[i]);
-            perror("execvp failed");
-            exit(1);
+        // Check for file redirection
+        if (is_command_with_redirection(cmd_buffer)) {
+            RedirInfo info = parse_redirection(cmd_buffer);
+            parse_command(cmd_buffer, args, &argsc);
+            // Handle both pipes and redirection
+            launch_program_with_redirection(args, argsc, info, pipefds, command_count - 1, i);
+        } else {
+            parse_command(cmd_buffer, args, &argsc);
+            // Only handle pipes
+            launch_program(args, argsc, pipefds, command_count - 1, i);
         }
     }
     
-    // Parent: close all pipe file descriptors
-    for (i = 0; i < 2 * (command_count - 1); i++) {
+    // Parent closes all pipes
+    for (int i = 0; i < (command_count - 1) * 2; i++) {
         close(pipefds[i]);
     }
     
     // Wait for all children
-    for (i = 0; i < command_count; i++) {
+    for (int i = 0; i < command_count; i++) {
         wait(NULL);
     }
-    
-    // Free allocated memory
-    for (i = 0; i < command_count; i++) {
-        free(commands[i]);
-    }
 }
+
+void launch_program_with_batch(char line[])
+{
+        char *batch_commands[MAX_ARGS];
+        int batch_count = parse_batch(line, batch_commands);
+
+        char *args[MAX_ARGS];
+        int argsc;
+        
+        //for each batch command execute sequentially
+        for (int i = 0; i < batch_count ; i++){
+
+            //using logic from main
+
+            char cmd[MAX_LINE];
+            strcpy(cmd, batch_commands[i]);
+
+            if(is_cd(cmd)){
+                parse_command (cmd, args, &argsc);
+                run_cd(args, argsc, NULL);
+            }
+
+            else if(is_command_with_pipe(cmd)){
+                char *pipe_cmds[MAX_ARGS];
+                int command_count = parse_pipes(cmd, pipe_cmds);
+                launch_program_with_pipes(pipe_cmds, command_count);
+            }
+
+            else if (is_command_with_redirection(cmd)){
+                RedirInfo info = parse_redirection(cmd);
+                parse_command(cmd, args, &argsc);
+                launch_program_with_redirection(args, argsc, info, NULL, 0, 0);
+                reap();
+            }
+
+            else {
+                parse_command(cmd, args, &argsc);
+                launch_program(args, argsc, NULL, 0, 0);
+                reap();
+            }
+        }
+
+
+}
+
