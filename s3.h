@@ -58,10 +58,12 @@ void parse_command(char line[], char *args[], int *argsc);
 RedirInfo parse_redirection(char line[]);
 int parse_pipes(char line[], char *commands[]);
 int parse_batch(char line[], char *lines[]);
+void extract_subshell(char *line, char *out);
 bool is_command_with_redirection(char line[]);
 bool is_cd(char line[]);
 bool is_command_with_pipe(char line[]);
 bool is_command_with_batch(char line[]);
+bool is_command_with_subshell(char line[]);
 void init_lwd(char lwd[]);
 void run_cd(char *args[], int argsc, char lwd[]);
 
@@ -69,10 +71,13 @@ void run_cd(char *args[], int argsc, char lwd[]);
 void child(char *args[], int argsc, int *pipesfds, int command_count, int cmd_idx);
 void child_with_output_redirected(char *args[], int argsc, RedirInfo info, int *pipesfds, int command_count, int cmd_idx);
 void child_with_input_redirected(char *args[], int argsc, RedirInfo info, int *pipesfds, int command_count, int cmd_idx);
+void child_subshell(char *subcmd, int *pipefds, int pipe_count, int cmd_idx);
 
 ///Program launching functions (add more as appropriate)
 void launch_program(char *args[], int argsc, int *pipesfds, int command_count, int cmd_idx);
 void launch_program_with_redirection(char *args[], int argsc, RedirInfo info, int *pipesfds, int command_count, int cmd_idx);
 void launch_program_with_pipes(char *commands[], int command_count);
 void launch_program_with_batch(char line[]);
+void launch_subshell(char *subcmd, int *pipefds, int pipe_count, int cmd_idx);
+void launch_subshell_with_redirection(char *subcmd, RedirInfo info);
 #endif
