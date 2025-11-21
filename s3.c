@@ -48,26 +48,74 @@ void parse_command(char line[], char *args[], int *argsc)
     args[*argsc] = NULL; ///args must be null terminated
 }
 
+// Helper function to find redirection operator at depth 0
+static char* find_redir_at_depth_zero(char *line, const char *operator)
+{
+    int depth = 0;
+    int op_len = strlen(operator);
+    
+    for (char *p = line; *p != '\0'; p++) {
+        if (*p == '(') depth++;
+        if (*p == ')') depth--;
+        
+        if (depth == 0) {
+            // Check if we match the operator
+            if (strncmp(p, operator, op_len) == 0) {
+                return p;
+            }
+        }
+    }
+    return NULL;
+}
+
 int parse_pipes(char line[], char *commands[])
 {
     int count = 0;
-    char *token = strtok(line, "|");
+    char *start = line;
+    int depth = 0;
     
-    while (token != NULL && count < MAX_ARGS) {
-        // Trim leading spaces
+    for (char *p = line; *p != '\0'; p++) {
+        if (*p == '(') depth++;
+        if (*p == ')') depth--;
+        
+        if (*p == '|' && depth == 0) {
+            // Found a pipe outside parentheses
+            *p = '\0';  // Null-terminate this command
+            
+            // Trim the command
+            char *token = start;
+            while (*token == ' ' || *token == '\t') token++;
+            
+            // Trim trailing whitespace
+            char *end = p - 1;
+            while (end >= token && (*end == ' ' || *end == '\t' || *end == '\n')) {
+                *end = '\0';
+                end--;
+            }
+            
+            commands[count++] = token;
+            start = p + 1;  // Next command starts after the pipe
+        }
+    }
+    
+    // Handle the last command (after the last pipe or the only command)
+    if (*start != '\0') {
+        char *token = start;
         while (*token == ' ' || *token == '\t') token++;
-
-        char *end = token + strlen(token) - 1;
-        while (end > token && (*end == ' ' || *end == '\t' || *end == '\n')) {
+        
+        // Trim trailing whitespace
+        char *end = start + strlen(start) - 1;
+        while (end >= token && (*end == ' ' || *end == '\t' || *end == '\n')) {
             *end = '\0';
             end--;
         }
-
+        
         commands[count++] = token;
-        token = strtok(NULL, "|");
     }
+    
     return count;
 }
+
 
 RedirInfo parse_redirection(char line[]) 
 {
@@ -78,7 +126,7 @@ RedirInfo parse_redirection(char line[])
     char* pos;
     
     /// Check for '>>' first
-    pos = strstr(line, ">>");
+    pos = find_redir_at_depth_zero(line, ">>");
     if (pos != NULL)
     {
         info.type = APPEND_OUTPUT_REDIR;
@@ -90,7 +138,7 @@ RedirInfo parse_redirection(char line[])
     }
     
     /// Check for '>'
-    pos = strstr(line, ">");
+    pos = find_redir_at_depth_zero(line, ">");
     if (pos!= NULL)
     {
         info.type = OUTPUT_REDIR;
@@ -102,7 +150,7 @@ RedirInfo parse_redirection(char line[])
     }
     
     /// Check for '<'
-    pos = strstr(line, "<");
+    pos = find_redir_at_depth_zero(line, "<");
     if (pos!= NULL)
     {
         info.type = INPUT_REDIR;
@@ -136,8 +184,8 @@ int parse_batch(char line[], char *lines[])
             while (*token == ' ' || *token == '\t') token++;
             
             char *end = p - 1;
-            while (end > token && (*end == ' ' || *end == '\t' || *end == '\n')) {
-                *(end + 1) = '\0';
+            while (end >= token && (*end == ' ' || *end == '\t' || *end == '\n')) {
+                *end = '\0';
                 end--;
             }
             
@@ -152,8 +200,8 @@ int parse_batch(char line[], char *lines[])
         while (*token == ' ' || *token == '\t') token++;
         
         char *end = start + strlen(start) - 1;
-        while (end > token && (*end == ' ' || *end == '\t' || *end == '\n')) {
-            *(end + 1) = '\0';
+        while (end >= token && (*end == ' ' || *end == '\t' || *end == '\n')) {
+            *end = '\0';
             end--;
         }
         
@@ -165,6 +213,7 @@ int parse_batch(char line[], char *lines[])
 
 void extract_subshell(char *line, char *out)
 {
+
     char *start = strchr(line, '(');
     if (start == NULL) {
         out[0] = '\0';
@@ -191,7 +240,7 @@ void extract_subshell(char *line, char *out)
     size_t len = end - start - 1;
     strncpy(out, start + 1, len);
     out[len] = '\0';
-
+    
     //trim leading whitespace
     char *trimmed = out;
     while (*trimmed == ' ' || *trimmed == '\t'){
@@ -209,6 +258,7 @@ void extract_subshell(char *line, char *out)
     if (trimmed != out){
         memmove(out, trimmed, strlen(trimmed) + 1);
     }
+    
 }
 
 // Functions to check for redirection, cd, and pipes
@@ -438,7 +488,7 @@ void child_subshell(char *subcmd, int *pipefds, int pipe_count, int cmd_idx)
             close(pipefds[i]);
         }
     }
-
+    
     //execute the subshell
     char *argv[] = {"./s3shell", "-c", subcmd, NULL};
     execvp(argv[0], argv);
@@ -503,9 +553,19 @@ void launch_program_with_pipes(char *commands[], int command_count)
 
         //check for subshell
         if(is_command_with_subshell(cmd_buffer)){
-            char inner[MAX_LINE];
-            extract_subshell(cmd_buffer, inner);
-            launch_subshell(inner, pipefds, command_count - 1, i);
+            if (is_command_with_redirection(cmd_buffer)) {
+                char cmd_copy[MAX_LINE];
+                strcpy(cmd_copy, cmd_buffer);
+                RedirInfo info = parse_redirection(cmd_copy);
+                char inner[MAX_LINE];
+                extract_subshell(cmd_buffer, inner);
+                launch_subshell_with_redirection(inner, info, pipefds, command_count - 1, i);
+            } 
+            else {
+                char inner[MAX_LINE];
+                extract_subshell(cmd_buffer, inner);
+                launch_subshell(inner, pipefds, command_count - 1, i);
+            }
         }
         // Check for file redirection
         else if (is_command_with_redirection(cmd_buffer)) {
@@ -540,7 +600,7 @@ void launch_program_with_pipes(char *commands[], int command_count)
 void launch_program_with_batch(char line[])
 {
     char line_copy[MAX_LINE];
-    strcpy(line_copy, line);  // Work on a copy
+    strcpy(line_copy, line);
     
     char *batch_commands[MAX_ARGS];
     int batch_count = parse_batch(line_copy, batch_commands);
@@ -561,14 +621,31 @@ void launch_program_with_batch(char line[])
             run_cd(args, argsc, lwd_local);
         }
         else if (is_command_with_subshell(cmd)) {
-            char inner[MAX_LINE];
-            extract_subshell(cmd, inner);
-            launch_subshell(inner, NULL, 0, 0);
-            reap();
+            // Check if subshell also has redirection
+            if (is_command_with_redirection(cmd)) {
+
+                // Subshell with redirection
+                char cmd_copy[MAX_LINE];
+                strcpy(cmd_copy, cmd);
+                
+                RedirInfo info = parse_redirection(cmd_copy);
+
+                char inner[MAX_LINE];
+                extract_subshell(cmd, inner);
+                
+                launch_subshell_with_redirection(inner, info, NULL, 0, 0);
+                reap();
+            } else {
+                // Subshell without redirection
+                char inner[MAX_LINE];
+                extract_subshell(cmd, inner);
+                launch_subshell(inner, NULL, 0, 0);
+                reap();
+            }
         }
         else if(is_command_with_pipe(cmd)){
             char cmd_copy[MAX_LINE];
-            strcpy(cmd_copy, cmd);  // Make a copy for parse_pipes
+            strcpy(cmd_copy, cmd);
             char *pipe_cmds[MAX_ARGS];
             int command_count = parse_pipes(cmd_copy, pipe_cmds);
             launch_program_with_pipes(pipe_cmds, command_count);
@@ -605,11 +682,8 @@ void launch_subshell(char *subcmd, int *pipefds, int pipe_count, int cmd_idx)
 }
 
 
-
-
-void launch_subshell_with_redirection(char *subcmd, RedirInfo info)
+void launch_subshell_with_redirection(char *subcmd, RedirInfo info, int *pipefds, int pipe_count, int cmd_idx)
 {
-    
     pid_t pid = fork();
     
     if (pid < 0) {
@@ -617,8 +691,20 @@ void launch_subshell_with_redirection(char *subcmd, RedirInfo info)
         return;
     }
     else if (pid == 0) {
-        // Child: set up redirection then execute subshell
+        // Child: set up pipes first (if they exist)
+        if (pipefds != NULL) {
+            if (cmd_idx > 0) {
+                dup2(pipefds[(cmd_idx-1) * 2], STDIN_FILENO);
+            }
+            if (cmd_idx < pipe_count) {
+                dup2(pipefds[cmd_idx * 2 + 1], STDOUT_FILENO);
+            }
+            for (int i = 0; i < pipe_count * 2; i++) {
+                close(pipefds[i]);
+            }
+        }
         
+        // Then set up redirection (this will override pipe stdout if it's output redirection)
         if (info.type == OUTPUT_REDIR || info.type == APPEND_OUTPUT_REDIR) {
             int flags;
             if (info.type == APPEND_OUTPUT_REDIR) {
@@ -653,7 +739,7 @@ void launch_subshell_with_redirection(char *subcmd, RedirInfo info)
             close(fd);
         }
         
-        // Execute the subshell with redirected I/O
+        // Execute the subshell with pipes and/or redirection
         char *argv[] = {"./s3shell", "-c", subcmd, NULL};
         execvp(argv[0], argv);
         perror("execvp failed for subshell");

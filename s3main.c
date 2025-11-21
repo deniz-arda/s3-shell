@@ -63,7 +63,7 @@ int main(int argc, char *argv[]){
                 char inner[MAX_LINE];
                 extract_subshell(line, inner);
         
-                launch_subshell_with_redirection(inner, info);
+                launch_subshell_with_redirection(inner, info, NULL, 0, 0);
                 reap();
             } 
             else {

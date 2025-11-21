@@ -79,5 +79,5 @@ void launch_program_with_redirection(char *args[], int argsc, RedirInfo info, in
 void launch_program_with_pipes(char *commands[], int command_count);
 void launch_program_with_batch(char line[]);
 void launch_subshell(char *subcmd, int *pipefds, int pipe_count, int cmd_idx);
-void launch_subshell_with_redirection(char *subcmd, RedirInfo info);
+void launch_subshell_with_redirection(char *subcmd, RedirInfo info, int *pipefds, int pipe_count, int cmd_idx);
 #endif
